@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Multi-AI Idea Integrator - CLI entry point."""
+import json
+import logging
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+from adapters import ClaudeAdapter, ChatGPTAdapter, GeminiAdapter, GrokAdapter
+from aggregator import aggregate
+from orchestrator import gather_responses
+from presenter import present
+from prompts import build_agent_prompt
+
+load_dotenv()
+
+_SEP   = "-" * 60
+_THICK = "=" * 60
+
+
+# -- Setup ------------------------------------------------------------
+
+def _setup_logging(logs_dir: Path) -> Path:
+    logs_dir.mkdir(exist_ok=True)
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = logs_dir / f"session_{ts}.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[logging.FileHandler(path, encoding="utf-8")],
+    )
+    return path
+
+
+def _build_adapters() -> dict:
+    specs = [
+        ("Claude",  "ANTHROPIC_API_KEY", ClaudeAdapter),
+        ("ChatGPT", "OPENAI_API_KEY",    ChatGPTAdapter),
+        ("Gemini",  "GOOGLE_API_KEY",    GeminiAdapter),
+        ("Grok",    "XAI_API_KEY",       GrokAdapter),
+    ]
+    adapters: dict = {}
+    skipped: list[str] = []
+
+    for name, env_var, cls in specs:
+        key = os.getenv(env_var)
+        if not key:
+            skipped.append(f"{name} (no {env_var})")
+            continue
+        try:
+            adapters[name] = cls(key)
+        except Exception as exc:
+            skipped.append(f"{name} (init error: {exc})")
+
+    if skipped:
+        print(f"  Skipping: {', '.join(skipped)}")
+    return adapters
+
+
+def _save_raw(
+    logs_dir: Path,
+    context: str,
+    request: str,
+    responses: dict,
+    failures: dict,
+) -> Path:
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = logs_dir / f"raw_{ts}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": ts,
+                "context":   context,
+                "request":   request,
+                "responses": responses,
+                "failures":  failures,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+# -- Output helpers ---------------------------------------------------
+
+def _print_footer(log_path: Path, raw_path: Path) -> None:
+    print(f"\n{_THICK}")
+    print(f"Session log    : {log_path}")
+    print(f"Raw responses  : {raw_path}")
+
+
+def _print_result(text: str, log_path: Path, raw_path: Path) -> None:
+    print(f"\n{_THICK}")
+    print(text)
+    _print_footer(log_path, raw_path)
+
+
+# -- Main pipeline ----------------------------------------------------
+
+def main() -> None:
+    logs_dir = Path("logs")
+    log_path = _setup_logging(logs_dir)
+    logger   = logging.getLogger("main")
+
+    print(f"\n{_THICK}")
+    print("   Multi-AI Idea Integrator")
+    print(_THICK)
+
+    context = input("\nContext (background / constraints) - Enter to skip:\n> ").strip()
+    request = input("\nRequest:\n> ").strip()
+    print()
+
+    if not request:
+        print("No request entered. Exiting.")
+        return
+
+    prompt = build_agent_prompt(context, request)
+    logger.info("Prompt built (%d chars)", len(prompt))
+
+    # Step 1: initialise adapters
+    print(_SEP)
+    print("Step 1/4  Initialising adapters ...")
+    adapters = _build_adapters()
+    if not adapters:
+        print("No adapters available. Check .env and retry.")
+        return
+    print(f"  Active: {', '.join(adapters)}")
+
+    # Step 2: parallel query
+    print(f"\n{_SEP}")
+    print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel ...")
+    responses, failures = gather_responses(adapters, prompt)
+
+    for name in adapters:
+        if name in responses:
+            print(f"  [OK] {name}")
+        else:
+            short_err = failures.get(name, "unknown error")[:80]
+            print(f"  [!!] {name} - {short_err}")
+
+    raw_path = _save_raw(logs_dir, context, request, responses, failures)
+    logger.info("Raw responses saved -> %s", raw_path)
+
+    if not responses:
+        print("\nAll models failed. Cannot continue.")
+        _print_footer(log_path, raw_path)
+        return
+
+    # Step 3: aggregate (Claude)
+    print(f"\n{_SEP}")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not anthropic_key:
+        print("Step 3/4  [SKIP] No ANTHROPIC_API_KEY - showing raw responses.\n")
+        for name, text in responses.items():
+            print(f"-- {name} --\n{text}\n")
+        _print_footer(log_path, raw_path)
+        return
+
+    print("Step 3/4  Claude is synthesising ...")
+    try:
+        synthesis = aggregate(anthropic_key, context, request, responses, failures)
+        logger.info("Synthesis complete (%d chars)", len(synthesis))
+    except Exception as exc:
+        logger.error("Aggregation error: %s", exc, exc_info=True)
+        print(f"  [!] Aggregation failed ({exc}) - showing raw responses.\n")
+        for name, text in responses.items():
+            print(f"-- {name} --\n{text}\n")
+        _print_footer(log_path, raw_path)
+        return
+
+    # Step 4: present (ChatGPT)
+    print(f"\n{_SEP}")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        print("Step 4/4  [SKIP] No OPENAI_API_KEY - showing synthesis directly.\n")
+        _print_result(synthesis, log_path, raw_path)
+        return
+
+    print("Step 4/4  ChatGPT is polishing the output ...")
+    try:
+        final = present(openai_key, synthesis)
+        logger.info("Final output ready (%d chars)", len(final))
+    except Exception as exc:
+        logger.error("Presentation error: %s", exc, exc_info=True)
+        print(f"  [!] Presentation failed ({exc}) - showing synthesis.\n")
+        final = synthesis
+
+    _print_result(final, log_path, raw_path)
+
+
+if __name__ == "__main__":
+    main()
