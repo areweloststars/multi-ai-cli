@@ -3,6 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Models](https://img.shields.io/badge/Models-Claude%20%7C%20ChatGPT%20%7C%20Gemini%20%7C%20Grok-purple)
+![Lint](https://github.com/areweloststars/multi-ai-cli/actions/workflows/lint.yml/badge.svg)
 
 A CLI tool that queries **Claude, ChatGPT, Gemini, and Grok in parallel**, then uses Claude to synthesize the responses and ChatGPT to polish the final output — all in one pipeline.
 
