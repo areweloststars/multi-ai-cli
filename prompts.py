@@ -1,12 +1,21 @@
 """Prompt templates for all pipeline stages."""
 
 
-def build_agent_prompt(context: str, request: str) -> str:
+def build_agent_prompt(context: str, request: str, detail: bool = False) -> str:
     """Build the shared prompt sent to all 4 models."""
     parts: list[str] = []
     if context.strip():
         parts.append(f"Context:\n{context.strip()}\n")
     parts.append(f"Request:\n{request.strip()}")
+    if detail:
+        parts.append(
+            "\nPlease give a thorough, detailed response with:\n"
+            "- Specific examples and concrete recommendations\n"
+            "- Step-by-step guidance where applicable\n"
+            "- Pros/cons or comparisons where relevant\n"
+            "- Practical tips and things to watch out for\n"
+            "Respond in the same language as the request."
+        )
     return "\n".join(parts)
 
 
@@ -19,7 +28,8 @@ AGGREGATION_SYSTEM = (
     "3. Highlight unique insights raised by only one model.\n"
     "4. Retain all relevant nuances and caveats.\n"
     "5. Use clear headings or sections when the content benefits from structure.\n"
-    "6. Be comprehensive but not repetitive."
+    "6. Be comprehensive but not repetitive.\n"
+    "7. IMPORTANT: Always respond in the same language as the user's original request."
 )
 
 AGGREGATION_USER_TEMPLATE = """\
@@ -42,7 +52,8 @@ PRESENTATION_SYSTEM = (
     "- Do NOT take sides or introduce opinions not already present.\n"
     "- Improve formatting: headings, bullet points, paragraph breaks, smooth transitions.\n"
     "- Write in a warm, clear, natural tone.\n"
-    "- The reader should find the result pleasant and easy to follow."
+    "- The reader should find the result pleasant and easy to follow.\n"
+    "- IMPORTANT: Always write in the same language as the input text. Do NOT translate."
 )
 
 PRESENTATION_USER_TEMPLATE = """\
