@@ -35,6 +35,9 @@ AGGREGATION_SYSTEM = (
 )
 
 AGGREGATION_USER_TEMPLATE = """\
+Context:
+{context}
+
 User's request:
 {request}
 

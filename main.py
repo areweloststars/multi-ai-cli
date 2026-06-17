@@ -81,6 +81,8 @@ def _safe_str(obj):
         return obj.encode("utf-8", errors="replace").decode("utf-8")
     if isinstance(obj, dict):
         return {k: _safe_str(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_safe_str(v) for v in obj]
     return obj
 
 
@@ -119,7 +121,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-AI Idea Integrator")
     parser.add_argument("-c", "--context", default=None, help="Background / constraints")
     parser.add_argument("-r", "--request", default=None, help="What to ask all models")
-    parser.add_argument("-d", "--detail", action="store_true", default=True, help="Request detailed responses (default: on)")
+    parser.add_argument("--no-detail", dest="detail", action="store_false", help="Disable detailed responses")
+    parser.set_defaults(detail=True)
     args = parser.parse_args()
 
     logs_dir = Path("logs")

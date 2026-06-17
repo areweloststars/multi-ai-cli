@@ -1,6 +1,9 @@
 """Synthesis step: uses Claude if available and funded, falls back to ChatGPT."""
 import logging
 
+import anthropic as _anthropic_mod
+from openai import OpenAI
+
 from config import AGGREGATION_MAX_TOKENS, CLAUDE_AGGREGATION_MODEL, CHATGPT_MODEL
 from prompts import AGGREGATION_SYSTEM, AGGREGATION_USER_TEMPLATE
 
@@ -34,8 +37,7 @@ def aggregate(
 
     if anthropic_key:
         try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
+            client = _anthropic_mod.Anthropic(api_key=anthropic_key)
             msg = client.messages.create(
                 model=CLAUDE_AGGREGATION_MODEL,
                 max_tokens=AGGREGATION_MAX_TOKENS,
@@ -48,7 +50,6 @@ def aggregate(
             logger.warning("Claude aggregation failed (%s), falling back to ChatGPT", exc)
 
     if openai_key:
-        from openai import OpenAI
         client = OpenAI(api_key=openai_key)
         resp = client.chat.completions.create(
             model=CHATGPT_MODEL,
