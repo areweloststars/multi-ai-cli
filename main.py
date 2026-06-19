@@ -122,6 +122,7 @@ def main() -> None:
     parser.add_argument("-c", "--context", default=None, help="Background / constraints")
     parser.add_argument("-r", "--request", default=None, help="What to ask all models")
     parser.add_argument("--no-detail", dest="detail", action="store_false", help="Disable detailed responses")
+    parser.add_argument("--local-response", default=None, help="Pre-generated response to inject as 'Claude Code'")
     parser.set_defaults(detail=True)
     args = parser.parse_args()
 
@@ -161,9 +162,17 @@ def main() -> None:
 
     # Step 2: parallel query
     print(f"\n{_SEP}")
-    print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel ...")
+    local_responses: dict = {}
+    if args.local_response:
+        local_responses["Claude Code"] = args.local_response.strip()
+        print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel + Claude Code (local) ...")
+    else:
+        print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel ...")
     responses, failures = gather_responses(adapters, prompt)
+    responses = {**local_responses, **responses}
 
+    if "Claude Code" in local_responses:
+        print("  [OK] Claude Code (local)")
     for name in adapters:
         if name in responses:
             print(f"  [OK] {name}")
