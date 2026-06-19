@@ -2,7 +2,7 @@
 CLAUDE_QUERY_MODEL = "claude-sonnet-4-6"
 CLAUDE_AGGREGATION_MODEL = "claude-opus-4-7"
 CHATGPT_MODEL = "gpt-4o"
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 GROK_MODEL = "grok-3"           # verify against https://docs.x.ai/docs/models
 
 # Timing

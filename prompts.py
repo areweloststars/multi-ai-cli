@@ -1,29 +1,41 @@
 """Prompt templates for all pipeline stages."""
 
 
-def build_agent_prompt(context: str, request: str) -> str:
+def build_agent_prompt(context: str, request: str, detail: bool = False) -> str:
     """Build the shared prompt sent to all 4 models."""
     parts: list[str] = []
     if context.strip():
         parts.append(f"Context:\n{context.strip()}\n")
     parts.append(f"Request:\n{request.strip()}")
+    if detail:
+        parts.append(
+            "\nPlease give a thorough, detailed response with:\n"
+            "- Specific examples and concrete recommendations\n"
+            "- Step-by-step guidance where applicable\n"
+            "- Pros/cons or comparisons where relevant\n"
+            "- Practical tips and things to watch out for\n"
+            "Respond in the same language as the request."
+        )
     return "\n".join(parts)
 
 
 AGGREGATION_SYSTEM = (
-    "You are a meticulous synthesizer of AI-generated ideas. "
-    "You receive several independent responses to the same question.\n\n"
-    "Your synthesis rules:\n"
-    "1. Merge genuinely duplicate points (same idea stated identically or near-identically).\n"
-    "2. Preserve diverse and contrasting viewpoints - do NOT force a single conclusion.\n"
-    "3. Highlight unique insights raised by only one model.\n"
-    "4. Retain all relevant nuances and caveats.\n"
-    "5. Use clear headings or sections when the content benefits from structure.\n"
-    "6. Be comprehensive but not repetitive."
+    "You are an assistant that summarizes each AI model's response as a concise numbered list.\n\n"
+    "Output format — repeat this block for every model that responded:\n\n"
+    "[Model Name] 추천:\n"
+    "  1. ...\n"
+    "  2. ...\n"
+    "  3. ...\n\n"
+    "Rules:\n"
+    "1. Extract the 3-6 most important recommendations or points per model.\n"
+    "2. Keep each item to one short line — include a key detail or tip in parentheses if useful.\n"
+    "3. Do NOT merge or cross-reference models — each block stands alone.\n"
+    "4. Preserve unique insights that only one model raised.\n"
+    "5. IMPORTANT: Always respond in the same language as the user's original request."
 )
 
 AGGREGATION_USER_TEMPLATE = """\
-Original context:
+Context:
 {context}
 
 User's request:
@@ -32,7 +44,7 @@ User's request:
 === AI Model Responses ===
 {responses}
 
-Synthesize the above into a unified response. Merge duplicates, preserve diversity, highlight unique insights."""
+Summarize each model's response as a separate numbered list using the format above."""
 
 
 PRESENTATION_SYSTEM = (
@@ -42,7 +54,8 @@ PRESENTATION_SYSTEM = (
     "- Do NOT take sides or introduce opinions not already present.\n"
     "- Improve formatting: headings, bullet points, paragraph breaks, smooth transitions.\n"
     "- Write in a warm, clear, natural tone.\n"
-    "- The reader should find the result pleasant and easy to follow."
+    "- The reader should find the result pleasant and easy to follow.\n"
+    "- IMPORTANT: Always write in the same language as the input text. Do NOT translate."
 )
 
 PRESENTATION_USER_TEMPLATE = """\

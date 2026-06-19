@@ -1,11 +1,27 @@
 #!/usr/bin/env python3
-"""Multi-AI Idea Integrator - CLI entry point."""
+"""Multi-AI Idea Integrator - CLI entry point.
+
+Usage:
+  python main.py                          # interactive prompts
+  python main.py -r "질문"               # request only
+  python main.py -c "맥락" -r "질문"    # context + request
+"""
+import argparse
 import json
 import logging
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Force UTF-8 on Windows console (fixes Korean garbling)
+if sys.platform == "win32":
+    import ctypes
+    ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+    ctypes.windll.kernel32.SetConsoleCP(65001)
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
 from dotenv import load_dotenv
 
@@ -60,29 +76,28 @@ def _build_adapters() -> dict:
     return adapters
 
 
-def _save_raw(
-    logs_dir: Path,
-    context: str,
-    request: str,
-    responses: dict,
-    failures: dict,
-) -> Path:
+def _safe_str(obj):
+    if isinstance(obj, str):
+        return obj.encode("utf-8", errors="replace").decode("utf-8")
+    if isinstance(obj, dict):
+        return {k: _safe_str(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_safe_str(v) for v in obj]
+    return obj
+
+
+def _save_raw(logs_dir: Path, context: str, request: str,
+              responses: dict, failures: dict) -> Path:
     ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = logs_dir / f"raw_{ts}.json"
-    path.write_text(
-        json.dumps(
-            {
-                "timestamp": ts,
-                "context":   context,
-                "request":   request,
-                "responses": responses,
-                "failures":  failures,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    payload = _safe_str({
+        "timestamp": ts,
+        "context":   context,
+        "request":   request,
+        "responses": responses,
+        "failures":  failures,
+    })
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
@@ -103,6 +118,14 @@ def _print_result(text: str, log_path: Path, raw_path: Path) -> None:
 # -- Main pipeline ----------------------------------------------------
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Multi-AI Idea Integrator")
+    parser.add_argument("-c", "--context", default=None, help="Background / constraints")
+    parser.add_argument("-r", "--request", default=None, help="What to ask all models")
+    parser.add_argument("--no-detail", dest="detail", action="store_false", help="Disable detailed responses")
+    parser.add_argument("--local-response", default=None, help="Pre-generated response to inject as 'Claude Code'")
+    parser.set_defaults(detail=True)
+    args = parser.parse_args()
+
     logs_dir = Path("logs")
     log_path = _setup_logging(logs_dir)
     logger   = logging.getLogger("main")
@@ -111,15 +134,21 @@ def main() -> None:
     print("   Multi-AI Idea Integrator")
     print(_THICK)
 
-    context = input("\nContext (background / constraints) - Enter to skip:\n> ").strip()
-    request = input("\nRequest:\n> ").strip()
-    print()
+    # Get context and request — from args or interactive input
+    context = (args.context or "").strip()
+
+    if args.request is not None:
+        request = args.request.strip()
+        print(f"\n질문: {request}\n")
+    else:
+        request = input("\n질문을 입력하세요:\n> ").strip()
+        print()
 
     if not request:
         print("No request entered. Exiting.")
         return
 
-    prompt = build_agent_prompt(context, request)
+    prompt = build_agent_prompt(context, request, detail=args.detail)
     logger.info("Prompt built (%d chars)", len(prompt))
 
     # Step 1: initialise adapters
@@ -133,9 +162,17 @@ def main() -> None:
 
     # Step 2: parallel query
     print(f"\n{_SEP}")
-    print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel ...")
+    local_responses: dict = {}
+    if args.local_response:
+        local_responses["Claude Code"] = args.local_response.strip()
+        print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel + Claude Code (local) ...")
+    else:
+        print(f"Step 2/4  Querying {len(adapters)} model(s) in parallel ...")
     responses, failures = gather_responses(adapters, prompt)
+    responses = {**local_responses, **responses}
 
+    if "Claude Code" in local_responses:
+        print("  [OK] Claude Code (local)")
     for name in adapters:
         if name in responses:
             print(f"  [OK] {name}")
@@ -151,20 +188,26 @@ def main() -> None:
         _print_footer(log_path, raw_path)
         return
 
-    # Step 3: aggregate (Claude)
+    # Step 3: aggregate (Claude preferred, ChatGPT fallback)
     print(f"\n{_SEP}")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    if not anthropic_key:
-        print("Step 3/4  [SKIP] No ANTHROPIC_API_KEY - showing raw responses.\n")
+    openai_key    = os.getenv("OPENAI_API_KEY")
+    if not anthropic_key and not openai_key:
+        print("Step 3/4  [SKIP] No aggregation key - showing raw responses.\n")
         for name, text in responses.items():
             print(f"-- {name} --\n{text}\n")
         _print_footer(log_path, raw_path)
         return
 
-    print("Step 3/4  Claude is synthesising ...")
+    print("Step 3/4  Synthesising responses ...")
     try:
-        synthesis = aggregate(anthropic_key, context, request, responses, failures)
-        logger.info("Synthesis complete (%d chars)", len(synthesis))
+        synthesis, agg_model = aggregate(
+            context, request, responses, failures,
+            anthropic_key=anthropic_key or "",
+            openai_key=openai_key or "",
+        )
+        logger.info("Synthesis complete via %s (%d chars)", agg_model, len(synthesis))
+        print(f"  [OK] Synthesised with {agg_model}")
     except Exception as exc:
         logger.error("Aggregation error: %s", exc, exc_info=True)
         print(f"  [!] Aggregation failed ({exc}) - showing raw responses.\n")
